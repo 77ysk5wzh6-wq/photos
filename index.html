@@ -262,6 +262,7 @@
     <button id="btn-daily_dump" class="active" onclick="switchProject('daily_dump')">daily_dump</button>
     <button id="btn-cage3000" onclick="switchProject('cage3000')">cage3000</button>
     <button id="btn-lyjel" onclick="switchProject('lyjel')">lyjel</button>
+    <button id="btn-sidecar" onclick="switchProject('sidecar')">sidecar</button>
   </nav>
 
   <div class="color-dots">
@@ -286,7 +287,8 @@
     const PROJECTS = {
       daily_dump: { path: 'assets_web', prefix: 'daily_dump', count: 20 },
       cage3000:   { path: 'asset_cage3000', prefix: 'cage3000', count: 11 },
-      lyjel:      { path: 'asset_lyjel', prefix: 'lyjel', count: 11 }
+      lyjel:      { path: 'asset_lyjel', prefix: 'lyjel', count: 11 },
+      sidecar:    { path: 'asset_sidecar', prefix: 'sidecar', count: 18 }
     };
 
     let currentProject = 'daily_dump';
@@ -326,6 +328,16 @@
       // lyjel일 때 01번 고정
       if (projectId === 'lyjel') {
         const frontPhoto = 'asset_lyjel/lyjel_01.jpg';
+        const frontIdx = IMAGES.indexOf(frontPhoto);
+        if (frontIdx > -1) {
+          IMAGES.splice(frontIdx, 1);
+          IMAGES.push(frontPhoto);
+        }
+      }
+
+      // sidecar일 때 12번 고정
+      if (projectId === 'sidecar') {
+        const frontPhoto = 'asset_sidecar/sidecar_12.jpg';
         const frontIdx = IMAGES.indexOf(frontPhoto);
         if (frontIdx > -1) {
           IMAGES.splice(frontIdx, 1);
@@ -733,7 +745,8 @@
           w = h / ar;
         }
       }
-      return w;
+      // 전체 표시 크기 10% 축소 (min·max 비율 유지)
+      return w * 0.9;
     }
 
     function buildStack() {
