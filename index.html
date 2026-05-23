@@ -745,8 +745,8 @@
           w = h / ar;
         }
       }
-      // 전체 표시 크기 10% 축소 (min·max 비율 유지)
-      return w * 0.9;
+      // 데스크탑만 표시 크기 10% 축소 (모바일은 원래 크기 유지)
+      return isMobile ? w : w * 0.9;
     }
 
     function buildStack() {
