@@ -209,6 +209,21 @@
       -webkit-touch-callout: none;
     }
 
+    /* ── 공개 전(잠금) 안내 ── */
+    .lock-notice {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Fira Mono', monospace;
+      font-size: clamp(11px, 0.95vw, 15px); /* 카테고리 메뉴보다 살짝 크게 */
+      letter-spacing: 0.04em;
+      color: rgb(241,165,250); /* 로딩화면 분홍색과 동일 */
+      pointer-events: none;
+      user-select: none;
+    }
+
     @media (max-width: 600px) {
       header { padding: 4vw 5vw; }
       header h1 { font-size: 10px; letter-spacing: 0; }
@@ -228,12 +243,14 @@
         top: 0;
         transition: color 0.05s, top 0.05s ease;
       }
-      .category-menu button.active { 
-        padding-left: 0; 
+      .category-menu button.active {
+        padding-left: 0;
         font-weight: 700;
         top: 0.5em;
       }
-      
+
+      .lock-notice { font-size: 13px; } /* 카테고리 메뉴보다 살짝 크게 */
+
       #footer-credit {
         background: rgb(241,165,250);
         color: #111;
@@ -288,8 +305,18 @@
       daily_dump: { path: 'assets_web', prefix: 'daily_dump', count: 20 },
       cage3000:   { path: 'asset_cage3000', prefix: 'cage3000', count: 11 },
       lyjel:      { path: 'asset_lyjel', prefix: 'lyjel', count: 11 },
-      sidecar:    { path: 'asset_sidecar', prefix: 'sidecar', count: 18 }
+      sidecar:    { path: 'asset_sidecar', prefix: 'sidecar', count: 18, unlockAt: '2026-05-30T00:00:00+09:00' }
     };
+
+    // 잠긴 프로젝트 자동 공개 타이머
+    let unlockTimer = null;
+
+    // 해당 프로젝트가 아직 공개 전(잠금)인지 판단
+    function isLocked(projectId) {
+      const cfg = PROJECTS[projectId];
+      if (!cfg || !cfg.unlockAt) return false;
+      return Date.now() < new Date(cfg.unlockAt).getTime();
+    }
 
     let currentProject = 'daily_dump';
     let IMAGES = [];
@@ -299,6 +326,15 @@
 
     function loadProject(projectId) {
       const config = PROJECTS[projectId];
+
+      // 아직 공개 전이면 사진 대신 "In progress" 화면 표시
+      if (isLocked(projectId)) {
+        IMAGES = [];
+        layout = [];
+        showLockScreen(projectId);
+        return;
+      }
+
       IMAGES = Array.from({length: config.count}, (_, i) =>
         `${config.path}/${config.prefix}_${String(i + 1).padStart(2, '0')}.jpg`
       );
@@ -347,8 +383,34 @@
 
       const rand = mulberry32(Date.now());
       layout = IMAGES.map(() => ({ ratio: rand() }));
-      
+
       buildStack();
+    }
+
+    // 공개 전 프로젝트: 사진 대신 "In progress" 안내 표시
+    function showLockScreen(projectId) {
+      container.innerHTML = '';
+      deck = [];
+
+      const notice = document.createElement('div');
+      notice.className = 'lock-notice';
+      notice.textContent = 'In progress';
+      container.appendChild(notice);
+
+      // 로딩 화면이 사진 로드를 기다리지 않도록 즉시 완료 처리
+      imagesLoaded = true;
+      checkAllLoaded();
+
+      // 공개 시각이 되면 (해당 프로젝트를 보고 있을 때) 자동으로 사진 로드
+      clearTimeout(unlockTimer);
+      const cfg = PROJECTS[projectId];
+      const msUntilUnlock = new Date(cfg.unlockAt).getTime() - Date.now();
+      // setTimeout 최대 지연(약 24.8일)을 넘지 않을 때만 예약
+      if (msUntilUnlock > 0 && msUntilUnlock < 2147483647) {
+        unlockTimer = setTimeout(() => {
+          if (currentProject === projectId) loadProject(projectId);
+        }, msUntilUnlock + 500); // 자정 직후 확실히 풀리도록 0.5초 여유
+      }
     }
 
     function switchProject(projectId) {
@@ -1266,6 +1328,7 @@
     function checkAllLoaded() {
       if (!imagesLoaded || !pianoReady) return;
       const loading = document.getElementById('loading');
+      if (!loading) return; // 이미 제거된 경우(로드 후 재호출) 무시
       loading.classList.add('fade-out');
       setTimeout(() => loading.remove(), 750);
     }
