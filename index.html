@@ -117,6 +117,12 @@
       gap: 1.2vh;
     }
 
+    .category-group {
+      display: flex;
+      flex-direction: column;
+      gap: 1.2vh;
+    }
+
     .category-menu button {
       background: none;
       border: none;
@@ -276,7 +282,10 @@
   </header>
 
   <nav class="category-menu">
-    <button id="btn-daily_dump" class="active" onclick="switchProject('daily_dump')">daily_dump</button>
+    <div class="category-group">
+      <button id="btn-daily_dump_1" class="active" onclick="switchProject('daily_dump_1')">daily_dump_1</button>
+      <button id="btn-daily_dump_2" onclick="switchProject('daily_dump_2')">daily_dump_2</button>
+    </div>
     <button id="btn-cage3000" onclick="switchProject('cage3000')">cage3000</button>
     <button id="btn-lyjel" onclick="switchProject('lyjel')">lyjel</button>
     <button id="btn-sidecar" onclick="switchProject('sidecar')">sidecar</button>
@@ -302,10 +311,11 @@
   <script>
     // ── Projects configuration ──────────────────────────────
     const PROJECTS = {
-      daily_dump: { path: 'assets_web', prefix: 'daily_dump', count: 20 },
-      cage3000:   { path: 'asset_cage3000', prefix: 'cage3000', count: 11 },
-      lyjel:      { path: 'asset_lyjel', prefix: 'lyjel', count: 11 },
-      sidecar:    { path: 'asset_sidecar', prefix: 'sidecar', count: 18 }
+      daily_dump_1: { path: 'assets_web', prefix: 'daily_dump', count: 20 },
+      daily_dump_2: { path: 'asset_daily2', prefix: 'daily_dump_2', count: 18 },
+      cage3000:     { path: 'asset_cage3000', prefix: 'cage3000', count: 11 },
+      lyjel:        { path: 'asset_lyjel', prefix: 'lyjel', count: 11 },
+      sidecar:      { path: 'asset_sidecar', prefix: 'sidecar', count: 18 }
     };
 
     // 잠긴 프로젝트 자동 공개 타이머
@@ -318,10 +328,12 @@
       return Date.now() < new Date(cfg.unlockAt).getTime();
     }
 
-    let currentProject = 'daily_dump';
+    let currentProject = 'daily_dump_1';
     let IMAGES = [];
     let layout = [];
     let isRecalling = false;
+    let recallRunId = 0;
+    let recallReleaseTimer = null;
     let COLOR_HOMES = {}; // 각 색상별 초기 위치 저장
 
     function loadProject(projectId) {
@@ -341,9 +353,19 @@
       
       shuffle(IMAGES);
       
-      // daily_dump일 때 15번 고정
-      if (projectId === 'daily_dump') {
+      // daily_dump_1일 때 15번 고정
+      if (projectId === 'daily_dump_1') {
         const frontPhoto = 'assets_web/daily_dump_15.jpg';
+        const frontIdx = IMAGES.indexOf(frontPhoto);
+        if (frontIdx > -1) {
+          IMAGES.splice(frontIdx, 1);
+          IMAGES.push(frontPhoto);
+        }
+      }
+
+      // daily_dump_2일 때 DSCF5299-2 2 사진(01번) 고정
+      if (projectId === 'daily_dump_2') {
+        const frontPhoto = 'asset_daily2/daily_dump_2_01.jpg';
         const frontIdx = IMAGES.indexOf(frontPhoto);
         if (frontIdx > -1) {
           IMAGES.splice(frontIdx, 1);
@@ -437,7 +459,8 @@
     }
 
     function recallAllCubes() {
-      if (isRecalling) return;
+      const runId = ++recallRunId;
+      clearTimeout(recallReleaseTimer);
       isRecalling = true;
 
       // 이스터에그 상태인 경우 모든 큐브 즉시 제거 후 5개 초기 상태로 재등장
@@ -446,19 +469,26 @@
         cubeState = [];
         isEasterEggActive = false;
         
-        spawnBaseCubes();
+        spawnBaseCubes(runId);
         
         // isRecalling은 spawnBaseCubes 내부의 2초 후 첫 이동이 끝난 뒤에 false로 변경
         return;
       }
 
-      const duration = 600; // 0.6초 내 복귀 시도
       let finishedCount = 0;
       const total = cubeState.filter(c => !c.dashing).length;
 
       if (total === 0) {
         isRecalling = false;
         return;
+      }
+
+      function releaseRecallWhenComplete() {
+        if (finishedCount !== total || runId !== recallRunId) return;
+        // 복귀 직후 잠시 자율 이동을 멈춰 홈 위치가 눈에 들어오도록 유지
+        recallReleaseTimer = setTimeout(() => {
+          if (runId === recallRunId) isRecalling = false;
+        }, 1500);
       }
 
       cubeState.forEach(cube => {
@@ -470,51 +500,52 @@
         const targetRow = home ? home.row : cube.initialRow;
 
         const dist = Math.abs(cube.col - targetCol) + Math.abs(cube.row - targetRow);
-        if (dist === 0) {
+        if (dist === 0 && !cube.animating) {
           finishedCount++;
-          if (finishedCount === total) isRecalling = false;
+          releaseRecallWhenComplete();
           return;
         }
 
-        // 각 스텝의 간격 계산 (최소 50ms)
-        const stepDelay = Math.max(50, Math.floor(duration / dist));
-        
-        let retryCount = 0;
+        const visited = new Set([`${cube.col},${cube.row}`]);
+        let stalledAttempts = 0;
         let totalSteps = 0;
         let done = false; // 이 큐브가 복귀 완료 여부 (중복 카운트 방지)
-        let lastCol = -1, lastRow = -1;
-        let fallbackTriggers = 0;
-        // 최대 80번 이동 안에 못가면 강제 순간이동 (지루한 루프 방지)
-        const maxSteps = 80;
-        const MAX_RETRY = 8;
+        // 장애물 우회분을 포함해도 이 수를 넘으면 즉시 홈으로 정리
+        const maxSteps = dist + Math.max(16, cubeState.length * 6);
+        const maxStalledAttempts = 25;
 
-        function finish() {
+        function finish(shouldSnap = true) {
           if (done) return;
           done = true;
-          // 현재 위치가 홈과 미세하게 다를 수 있으니 강제 스냅으로 정확히 고정
-          cube.el.style.transition = 'none';
-          cube.el.style.transform = '';
-          cube.el.style.transformOrigin = '';
-          cube.animating = false;
-          const size = getCubeSize();
-          cube.col = targetCol;
-          cube.row = targetRow;
-          cube.el.style.left   = targetCol * size + 'px';
-          cube.el.style.bottom = targetRow * size + 'px';
-          finishedCount++;
-          if (finishedCount === total) {
-            // 모든 큐브가 복귀한 후 2초간 대기 (피아노 소리 및 자율 이동 정지)
-            setTimeout(() => {
-              isRecalling = false;
-            }, 1500);
+
+          if (shouldSnap && (cube.col !== targetCol || cube.row !== targetRow)) {
+            const size = getCubeSize();
+            cube.el.style.transition = 'none';
+            cube.el.style.transform = '';
+            cube.el.style.transformOrigin = '';
+            cube.animating = false;
+            cube.col = targetCol;
+            cube.row = targetRow;
+            cube.el.style.left   = targetCol * size + 'px';
+            cube.el.style.bottom = targetRow * size + 'px';
           }
+
+          finishedCount++;
+          releaseRecallWhenComplete();
         }
 
         function nextStep() {
-          if (done) return; // 이미 완료된 큐브는 더 이상 이동 안 함
+          // 새 복귀 요청이 시작되었거나 완료된 큐브의 이전 타이머는 무시
+          if (done || runId !== recallRunId) return;
 
           if (cube.dashing) {
-            finish();
+            finish(false);
+            return;
+          }
+
+          // 논리 좌표는 회전이 끝날 때 갱신되므로 도착 판정보다 먼저 기다린다.
+          if (cube.animating) {
+            setTimeout(nextStep, 20);
             return;
           }
 
@@ -524,105 +555,92 @@
             return;
           }
 
-          // 너무 많이 맴돌면 강제 귀환
-          if (totalSteps > maxSteps) {
+          if (totalSteps >= maxSteps) {
             finish();
             return;
           }
 
-          // 목표 방향 계산
-          let preferDc = 0, preferDr = 0;
-          if (cube.col !== targetCol) {
-            preferDc = cube.col < targetCol ? 1 : -1;
-          } else if (cube.row !== targetRow) {
-            preferDr = cube.row < targetRow ? 1 : -1;
-          }
-
-          const size = getCubeSize();
-          let directions = [{ dc: preferDc, dr: preferDr }];
-
-          if (retryCount >= MAX_RETRY) {
-            fallbackTriggers++;
-            if (fallbackTriggers > 6) {
-              // 완전히 경로가 막힌 상태 (교착) -> 강제 순간이동
-              finish();
-              return;
-            }
-            
-            if (preferDc !== 0) {
-              const drToward = cube.row < targetRow ? 1 : (cube.row > targetRow ? -1 : 0);
-              const drAway   = -drToward || 1;
-              directions.push({ dc: 0, dr: drToward || 1 });
-              directions.push({ dc: 0, dr: drAway });
-            } else {
-              const dcToward = cube.col < targetCol ? 1 : (cube.col > targetCol ? -1 : 0);
-              const dcAway   = -dcToward || 1;
-              directions.push({ dc: dcToward || 1, dr: 0 });
-              directions.push({ dc: dcAway, dr: 0 });
-            }
-            retryCount = 0;
-          }
-
-          let moved = false;
-          let chosenDc = null, chosenDr = null;
-
-          // 1. 방금 이동해온 직전 위치(lastCol, lastRow)가 아닌 새로운 경로 먼저 탐색
-          for (const { dc, dr } of directions) {
-            const nc = cube.col + dc;
-            const nr = cube.row + dr;
-            if (nc < 0 || nr < 0 ||
-                nc > Math.floor(window.innerWidth / size) - 1 ||
-                nr > Math.floor(window.innerHeight / size) - 1) continue;
-            if (isOccupied(nc, nr, cube)) continue;
-            
-            if (directions.length > 1 && nc === lastCol && nr === lastRow) {
-              continue; // 핑퐁 진동 방지를 위해 일단 스킵
-            }
-            
-            chosenDc = dc; chosenDr = dr;
-            break;
-          }
-
-          // 2. 만약 우회로가 없고, 오직 직전 위치로만 돌아갈 수 있다면 그거라도 선택
-          if (chosenDc === null && directions.length > 1) {
-            for (const { dc, dr } of directions) {
-              const nc = cube.col + dc;
-              const nr = cube.row + dr;
-              if (nc < 0 || nr < 0 ||
-                  nc > Math.floor(window.innerWidth / size) - 1 ||
-                  nr > Math.floor(window.innerHeight / size) - 1) continue;
-              if (isOccupied(nc, nr, cube)) continue;
-              chosenDc = dc; chosenDr = dr;
-              break;
-            }
-          }
-
-          if (chosenDc !== null) {
-            const oldCol = cube.col;
-            const oldRow = cube.row;
-            if (performRoll(cube, chosenDc, chosenDr, true, () => {
-              lastCol = oldCol; // 이동을 완료한 후, 출발했던 위치를 직전 위치로 갱신
-              lastRow = oldRow;
-              retryCount = 0;
-              fallbackTriggers = 0; // 길을 찾았으니 막힘 카운트 초기화
+          const step = findRecallStep(cube, targetCol, targetRow, visited);
+          if (step && !isOccupied(cube.col + step.dc, cube.row + step.dr, cube)) {
+            if (performRoll(cube, step.dc, step.dr, true, () => {
+              if (done || runId !== recallRunId) return;
               totalSteps++;
+              stalledAttempts = 0;
+              visited.add(`${cube.col},${cube.row}`);
               setTimeout(nextStep, 10);
-            })) {
-              moved = true;
-            }
+            })) return;
           }
 
-          if (!moved) {
-            retryCount++;
-            setTimeout(nextStep, 20);
+          // 목적지가 다른 큐브에 잠시 막힌 경우 재시도하되 대기 시간은 제한
+          stalledAttempts++;
+          if (stalledAttempts >= maxStalledAttempts) {
+            finish();
+            return;
           }
+          setTimeout(nextStep, 20);
         }
         nextStep();
 
       });
     }
 
-    function spawnBaseCubes() {
+    function findRecallStep(cube, targetCol, targetRow, visited) {
+      const size = getCubeSize();
+      const maxCol = Math.floor(window.innerWidth / size) - 1;
+      const maxRow = Math.floor(window.innerHeight / size) - 1;
+      const startKey = `${cube.col},${cube.row}`;
+      const targetKey = `${targetCol},${targetRow}`;
+      const blocked = new Set(visited);
+
+      // 출발점과 최종 홈은 방문 기록 때문에 막히지 않도록 한다.
+      blocked.delete(startKey);
+      blocked.delete(targetKey);
+
+      cubeState.forEach(other => {
+        if (other === cube || other.dashing) return;
+        blocked.add(`${other.col},${other.row}`);
+        if (other.animating) blocked.add(`${other.targetCol},${other.targetRow}`);
+      });
+
+      if (blocked.has(targetKey)) return null;
+
+      const queue = [{ col: cube.col, row: cube.row, firstStep: null }];
+      const seen = new Set([startKey]);
+      let cursor = 0;
+
+      while (cursor < queue.length) {
+        const current = queue[cursor++];
+        const directions = [
+          { dc: 1, dr: 0 },
+          { dc: -1, dr: 0 },
+          { dc: 0, dr: 1 },
+          { dc: 0, dr: -1 },
+        ].sort((a, b) => {
+          const distanceA = Math.abs(current.col + a.dc - targetCol) + Math.abs(current.row + a.dr - targetRow);
+          const distanceB = Math.abs(current.col + b.dc - targetCol) + Math.abs(current.row + b.dr - targetRow);
+          return distanceA - distanceB;
+        });
+
+        for (const direction of directions) {
+          const nextCol = current.col + direction.dc;
+          const nextRow = current.row + direction.dr;
+          const nextKey = `${nextCol},${nextRow}`;
+
+          if (nextCol < 0 || nextCol > maxCol || nextRow < 0 || nextRow > maxRow) continue;
+          if (seen.has(nextKey) || blocked.has(nextKey)) continue;
+
+          const firstStep = current.firstStep || direction;
+          if (nextKey === targetKey) return firstStep;
+
+          seen.add(nextKey);
+          queue.push({ col: nextCol, row: nextRow, firstStep });
+        }
+      }
+
+      return null;
+    }
+
+    function spawnBaseCubes(runId) {
       const containerGrams = document.querySelector('.color-dots');
       const size = getCubeSize();
       
@@ -660,8 +678,10 @@
           span.style.opacity = '1';
         });
 
-        // 1초 후(페이드 인 완료 시점) 무작위 이동 및 피아노 소리 재생
+        // 2초 후 무작위 이동 및 피아노 소리 재생
         setTimeout(() => {
+          if (runId !== recallRunId) return;
+
           const validDirs = [];
           [ {dc:1, dr:0}, {dc:-1, dr:0}, {dc:0, dr:1}, {dc:0, dr:-1} ].forEach(d => {
             const nc = cubeObj.col + d.dc;
@@ -679,7 +699,7 @@
           
           // 모든 큐브의 타임아웃이 끝날 때쯤 메인 루프 재개 (한 번만 실행되도록 체크)
           setTimeout(() => {
-            isRecalling = false;
+            if (runId === recallRunId) isRecalling = false;
           }, 500);
         }, 2000);
       });
@@ -1099,7 +1119,8 @@
       const interval = duration / totalCubes;
 
       function spawn() {
-        if (count >= totalCubes) return;
+        // 카테고리 전환으로 이스터에그가 종료되면 예약된 추가 생성도 중단
+        if (!isEasterEggActive || count >= totalCubes) return;
 
         const span = document.createElement('span');
         const color = weightedColors[Math.floor(Math.random() * weightedColors.length)];
@@ -1196,7 +1217,6 @@
       el.style.transform = 'none';
       
       const rect = el.getBoundingClientRect();
-      const currentWidth = rect.width;
       el.style.left = rect.left + 'px';
       el.style.bottom = (window.innerHeight - rect.bottom) + 'px';
 
@@ -1354,7 +1374,7 @@
       });
     }
 
-    loadProject('daily_dump');
+    loadProject('daily_dump_1');
     initCubes();
     initPiano();
     trackImages();
